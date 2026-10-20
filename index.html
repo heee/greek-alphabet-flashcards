@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Greek Alphabet</title>
+<meta name="description" content="Swipeable marble flashcards for the 24 letters of the Greek alphabet.">
+<meta name="theme-color" content="#2A2723">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Greek">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="preload" href="fonts/gfsdidot-greek.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/cinzel-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main id="deck" class="screen deck">
+  <header class="hud">
+    <div class="hud-half">
+      <div class="label" id="levelLabel">CARD · 0 / 5</div>
+      <div class="segs" id="levelSegs" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+    </div>
+    <button class="hud-half hud-mastered" id="openStoa" type="button" aria-label="Mastered 0 of 24. Open the Stoa statistics">
+      <span class="label" id="masteredLabel">MASTERED · 0 / 24</span>
+      <span class="bar"><span class="bar-fill" id="masteredFill"></span></span>
+    </button>
+  </header>
+
+  <div class="table" id="table">
+    <div class="stage-box" id="stageBox">
+      <div class="stage" id="stage">
+        <div class="card behind" id="behind" aria-hidden="true"></div>
+        <button class="card current" id="card" type="button"></button>
+      </div>
+    </div>
+  </div>
+  <p class="sr-only" id="live" aria-live="polite"></p>
+</main>
+
+<section id="stoa" class="screen stoa" aria-labelledby="stoaTitle" hidden>
+  <div class="stoa-inner">
+    <div class="stoa-head">
+      <div class="stoa-title">
+        <h1 id="stoaTitle">STOA</h1>
+        <div class="stoa-greek" lang="el">ΣΤΟΑ</div>
+      </div>
+      <button class="icon-btn" id="closeStoa" type="button" aria-label="Close the Stoa">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2 L14 14 M14 2 L2 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+
+    <div class="stoa-summary">
+      <div class="summary-row label"><span id="stoaMastered">MASTERED · 0 / 24</span><span id="stoaTrained">TRAINED · 0</span></div>
+      <div class="bar bar-stoa"><span class="bar-fill" id="stoaFill"></span></div>
+    </div>
+
+    <ol class="grid" id="grid" aria-label="All 24 letters with their level"></ol>
+
+    <div class="legend">
+      <div class="legend-ramps">
+        <div class="legend-ramp"><span>LEARNING</span><div class="ramp" id="rampLearning"></div></div>
+        <div class="legend-ramp"><span>MASTERED</span><div class="ramp" id="rampMastered"></div></div>
+      </div>
+      <p class="legend-note">Within each state, a lighter shade = stronger than the other letters in it (level, then accuracy). Bars = level 0–5.</p>
+    </div>
+
+    <div class="stoa-spacer"></div>
+
+    <p class="stoa-msg" id="stoaMsg" role="status" aria-live="polite"></p>
+
+    <div class="btn-row">
+      <button class="btn" id="exportBtn" type="button">EXPORT PROGRESS</button>
+      <button class="btn" id="importBtn" type="button">IMPORT PROGRESS</button>
+    </div>
+    <input type="file" id="importFile" accept="application/json,.json" hidden>
+
+    <div id="resetArea">
+      <button class="btn btn-reset" id="resetBtn" type="button">RESET PROGRESS</button>
+      <div class="reset-confirm" id="resetConfirm" hidden>
+        <p class="label reset-q">ERASE ALL PROGRESS?</p>
+        <div class="btn-row">
+          <button class="btn" id="resetCancel" type="button">CANCEL</button>
+          <button class="btn btn-danger" id="resetYes" type="button">YES, RESET</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="offline label" id="offline">PREPARING OFFLINE…</div>
+  </div>
+</section>
+
+<span class="measure" id="measure" aria-hidden="true"></span>
+<script src="app.js"></script>
+</body>
+</html>
