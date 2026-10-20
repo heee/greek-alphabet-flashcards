@@ -1,5 +1,5 @@
 // Bump CACHE on every deploy so phones pick up the new files.
-var CACHE = 'greek-flashcards-v1';
+var CACHE = 'greek-flashcards-v2';
 var ASSETS = [
   './',
   './index.html',

@@ -199,7 +199,7 @@ button {
   min-height: 0;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .stage-box { position: relative; flex: none; }
@@ -302,7 +302,7 @@ button {
 .glyph-front {
   font-family: var(--didot);
   font-weight: 400;
-  font-size: 176px;
+  font-size: 220px;
   line-height: 1;
   text-align: center;
   white-space: nowrap;
@@ -336,6 +336,9 @@ button {
   line-height: 1;
   color: var(--gold);
 }
+
+/* the partner form on the back, shown for reference only */
+.glyph-back .partner { opacity: 0.4; }
 
 .name {
   font-size: 54px;
@@ -471,6 +474,8 @@ button {
 .tile-glyph { font-family: var(--didot); font-size: 24px; line-height: 1; white-space: nowrap; }
 .tile-name { font-size: 7.5px; font-weight: 600; letter-spacing: 0.3px; line-height: 1; white-space: nowrap; }
 
+.tile-bars { width: 100%; display: flex; flex-direction: column; gap: 2px; }
+
 .tile-segs {
   width: 100%;
   padding: 0 3px;
@@ -479,7 +484,7 @@ button {
   gap: 2px;
 }
 
-.tile-segs span { height: 4px; border-radius: 1px; background: rgba(0, 0, 0, 0.3); }
+.tile-segs span { height: 3px; border-radius: 1px; background: rgba(0, 0, 0, 0.3); }
 
 .legend { display: flex; flex-direction: column; gap: 8px; }
 

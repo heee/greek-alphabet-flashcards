@@ -28,20 +28,27 @@
     ['chi', 'Χχ', 'CHI', 'KYE', 'CH'],
     ['psi', 'Ψψ', 'PSI', 'SYE', 'PS'],
     ['omega', 'Ωω', 'OMEGA', 'OH · MAY · GUH', 'Ō']
-  ].map(function (l) { return { key: l[0], glyph: l[1], name: l[2], pron: l[3], latin: l[4] }; });
+  ].map(function (l, i) { return { key: l[0], glyph: l[1], name: l[2], pron: l[3], latin: l[4], num: i }; });
 
   var ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII',
     'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX', 'XXI', 'XXII', 'XXIII', 'XXIV'];
 
-  var N = LETTERS.length;
+  // Each letter has two cards: its capital and its small form.
+  var CARDS = [];
+  LETTERS.forEach(function (l) {
+    CARDS.push({ id: l.key + '.upper', letter: l, upper: true, glyph: l.glyph.charAt(0), latin: l.latin });
+    CARDS.push({ id: l.key + '.lower', letter: l, upper: false, glyph: l.glyph.charAt(1), latin: l.latin.toLowerCase() });
+  });
+
+  var NC = CARDS.length;
   var MAX_LEVEL = 5;
   var STORAGE_KEY = 'greekFlashcards.v1';
 
   // ---------- Progress model ----------
 
   function blankProgress() {
-    var p = { version: 1, levels: {}, correct: {}, attempts: {}, trained: 0, lastIndex: 0 };
-    LETTERS.forEach(function (l) { p.levels[l.key] = 0; p.correct[l.key] = 0; p.attempts[l.key] = 0; });
+    var p = { version: 2, levels: {}, correct: {}, attempts: {}, trained: 0, lastCard: CARDS[0].id };
+    CARDS.forEach(function (c) { p.levels[c.id] = 0; p.correct[c.id] = 0; p.attempts[c.id] = 0; });
     return p;
   }
 
@@ -49,23 +56,28 @@
     return typeof v === 'number' && isFinite(v) && v >= 0 && Math.floor(v) === v && (max === undefined || v <= max);
   }
 
-  // Returns a clean progress object, or null if the data is not valid v1 progress.
+  // Returns clean v2 progress, or null if the data is not valid. Version 1 (one record per
+  // letter) is upgraded by giving both the capital and the small card the letter's record.
   function validate(data) {
-    if (!data || typeof data !== 'object' || data.version !== 1) return null;
+    if (!data || typeof data !== 'object' || (data.version !== 1 && data.version !== 2)) return null;
+    if (!data.levels || !data.correct || !data.attempts || !isCount(data.trained)) return null;
     var p = blankProgress();
-    for (var i = 0; i < N; i++) {
-      var k = LETTERS[i].key;
-      if (!data.levels || !isCount(data.levels[k], MAX_LEVEL)) return null;
-      if (!data.correct || !isCount(data.correct[k])) return null;
-      if (!data.attempts || !isCount(data.attempts[k])) return null;
-      p.levels[k] = data.levels[k];
-      p.attempts[k] = data.attempts[k];
-      p.correct[k] = Math.min(data.correct[k], data.attempts[k]);
+    for (var i = 0; i < NC; i++) {
+      var id = CARDS[i].id;
+      var src = data.version === 1 ? CARDS[i].letter.key : id;
+      if (!isCount(data.levels[src], MAX_LEVEL) || !isCount(data.correct[src]) || !isCount(data.attempts[src])) return null;
+      p.levels[id] = data.levels[src];
+      p.attempts[id] = data.attempts[src];
+      p.correct[id] = Math.min(data.correct[src], data.attempts[src]);
     }
-    if (!isCount(data.trained)) return null;
     p.trained = data.trained;
-    p.lastIndex = isCount(data.lastIndex) && data.lastIndex < N ? data.lastIndex : 0;
+    if (data.version === 2 && cardIndex(data.lastCard) >= 0) p.lastCard = data.lastCard;
     return p;
+  }
+
+  function cardIndex(id) {
+    for (var i = 0; i < NC; i++) if (CARDS[i].id === id) return i;
+    return -1;
   }
 
   function load() {
@@ -73,7 +85,9 @@
       var raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) return validate(JSON.parse(raw)) || blankProgress();
     } catch (e) { /* storage unavailable: run in memory */ }
-    return blankProgress();
+    var p = blankProgress();
+    p.lastCard = CARDS[Math.floor(Math.random() * NC)].id;
+    return p;
   }
 
   function save() {
@@ -81,22 +95,56 @@
   }
 
   var progress = load();
-  var index = progress.lastIndex;
 
-  function levelOf(i) { return progress.levels[LETTERS[i].key]; }
+  function levelOf(c) { return progress.levels[CARDS[c].id]; }
   function masteredCount() {
-    return LETTERS.reduce(function (n, l) { return n + (progress.levels[l.key] === MAX_LEVEL ? 1 : 0); }, 0);
+    return CARDS.reduce(function (n, c) { return n + (progress.levels[c.id] === MAX_LEVEL ? 1 : 0); }, 0);
   }
-  function accuracy(i) {
-    var k = LETTERS[i].key;
-    return progress.attempts[k] ? Math.round(progress.correct[k] / progress.attempts[k] * 100) : 0;
+
+  // ---------- Card order: weighted random with history ----------
+
+  // Weaker cards come up more often; mastered cards still appear, just rarely.
+  var WEIGHT = [10, 7, 5, 3, 2, 1];
+  var NO_REPEAT = 6; // a card isn't drawn again within this many cards
+
+  var history = [cardIndex(progress.lastCard)];
+  var pos = 0;          // position of the current card in history
+  var upcoming = null;  // the pre-drawn next card, so it can sit behind the current one
+
+  function draw() {
+    var recent = history.slice(-NO_REPEAT);
+    var pool = [], total = 0;
+    for (var i = 0; i < NC; i++) {
+      if (recent.indexOf(i) >= 0) continue;
+      var w = WEIGHT[levelOf(i)];
+      pool.push([i, w]);
+      total += w;
+    }
+    var r = Math.random() * total;
+    for (var k = 0; k < pool.length; k++) { r -= pool[k][1]; if (r < 0) return pool[k][0]; }
+    return pool[pool.length - 1][0];
   }
-  function wrap(i) { return (i + N) % N; }
+
+  function current() { return history[pos]; }
+  function nextCard() {
+    if (pos < history.length - 1) return history[pos + 1];
+    if (upcoming === null) upcoming = draw();
+    return upcoming;
+  }
+  function prevCard() { return pos > 0 ? history[pos - 1] : null; }
+
+  function goNext() {
+    if (pos === history.length - 1) { history.push(nextCard()); upcoming = null; }
+    pos += 1;
+    if (history.length > 200) { history.splice(0, 100); pos -= 100; }
+  }
+  function goPrev() { if (pos > 0) pos -= 1; }
 
   // ---------- DOM ----------
 
   var $ = function (id) { return document.getElementById(id); };
   var deck = $('deck');
+  var table = $('table');
   var stageBox = $('stageBox');
   var stage = $('stage');
   var cardEl = $('card');
@@ -115,7 +163,7 @@
 
   // ---------- Card faces ----------
 
-  // Small seeded PRNG so each letter's marble has its own (stable) veins.
+  // Small seeded PRNG so each card's marble has its own (stable) veins.
   function rng(seed) {
     var s = (seed * 2654435761) >>> 0 || 1;
     return function () {
@@ -138,9 +186,9 @@
       '<path d="' + c + '" fill="none" stroke="#D8D2C6" stroke-width="0.8"/></svg>';
   }
 
-  // Font sizes that fit the 272px inner frame, measured once fonts are ready.
+  // Name sizes that fit the 272px inner frame, measured once fonts are ready.
   var INNER_W = 330 - 28 - 28 - 2;
-  var fit = { front: {}, name: {} };
+  var fitName = {};
 
   function fitSize(text, font, maxSize, spacing, avail) {
     measure.style.font = font.replace('{s}', maxSize + 'px');
@@ -151,30 +199,32 @@
   }
 
   function computeFits() {
-    LETTERS.forEach(function (l) {
-      fit.front[l.key] = fitSize(l.glyph, "400 {s} 'GFS Didot', serif", 176, 0, INNER_W - 8);
-      fit.name[l.key] = fitSize(l.name, "600 {s} 'Cinzel', serif", 54, 4, INNER_W - 6);
-    });
+    LETTERS.forEach(function (l) { fitName[l.key] = fitSize(l.name, "600 {s} 'Cinzel', serif", 54, 4, INNER_W - 6); });
   }
 
+  function caseWord(c) { return c.upper ? 'CAPITAL' : 'SMALL'; }
+
   function frontHTML(i) {
-    var l = LETTERS[i];
-    var fs = fit.front[l.key] || 176;
+    var c = CARDS[i];
     return '<div class="face face-front">' + veinsSVG(i) +
       '<div class="frame">' +
-      '<div class="card-top"><span>GREEK · ' + ROMAN[i] + '</span><span>ALPHABET</span></div>' +
-      '<div class="glyph-front" lang="el" style="font-size:' + fs + 'px">' + l.glyph + '</div>' +
+      '<div class="card-top"><span>GREEK · ' + ROMAN[c.letter.num] + '</span><span>' + caseWord(c) + '</span></div>' +
+      '<div class="glyph-front" lang="el">' + c.glyph + '</div>' +
       '<div class="card-foot">TAP TO FLIP</div>' +
       '</div></div>';
   }
 
   function backHTML(i) {
-    var l = LETTERS[i];
-    var fs = fit.name[l.key] || 50;
+    var c = CARDS[i], l = c.letter;
+    var fs = fitName[l.key] || 50;
+    // Show the pair, with the form this card tests in full gold and its partner dimmed.
+    var pair = c.upper
+      ? '<span>' + l.glyph.charAt(0) + '</span><span class="partner">' + l.glyph.charAt(1) + '</span>'
+      : '<span class="partner">' + l.glyph.charAt(0) + '</span><span>' + l.glyph.charAt(1) + '</span>';
     return '<div class="face face-back"><div class="frame">' +
-      '<div class="card-top"><span>GREEK · ' + ROMAN[i] + '</span><span>= ' + l.latin + '</span></div>' +
+      '<div class="card-top"><span>GREEK · ' + ROMAN[l.num] + '</span><span>= ' + c.latin + '</span></div>' +
       '<div class="back-stack">' +
-      '<div class="glyph-back" lang="el">' + l.glyph + '</div>' +
+      '<div class="glyph-back" lang="el">' + pair + '</div>' +
       '<div class="name" style="font-size:' + fs + 'px">' + l.name + '</div>' +
       '<div class="pron">' + l.pron + '</div>' +
       '</div>' +
@@ -183,33 +233,34 @@
   }
 
   function titleCase(s) { return s.charAt(0) + s.slice(1).toLowerCase(); }
+  function spokenName(c) { return (c.upper ? 'Capital ' : 'Small ') + titleCase(c.letter.name); }
 
   var behindIndex = null;
 
   function renderCard() {
-    var l = LETTERS[index];
-    cardEl.innerHTML = frontHTML(index) + backHTML(index);
+    var c = CARDS[current()];
+    cardEl.innerHTML = frontHTML(current()) + backHTML(current());
     cardEl.classList.remove('flipped');
-    cardEl.setAttribute('aria-label', 'Card ' + titleCase(l.name) +
-      '. Tap to flip, arrow up for got it, arrow down for missed, arrow left for previous, arrow right to skip.');
-    setBehind(wrap(index + 1));
+    cardEl.setAttribute('aria-label', (c.upper ? 'Capital' : 'Small') +
+      ' letter card. Tap to flip, arrow up for got it, arrow down for missed, arrow left for previous, arrow right to skip.');
+    setBehind(nextCard());
   }
 
   function setBehind(i) {
-    if (behindIndex === i) return;
+    if (i === null || behindIndex === i) return;
     behindIndex = i;
     behindEl.innerHTML = frontHTML(i);
   }
 
   function renderHud() {
-    var lv = levelOf(index);
+    var lv = levelOf(current());
     $('levelLabel').textContent = 'CARD · ' + lv + ' / 5';
     var segs = $('levelSegs').children;
     for (var k = 0; k < segs.length; k++) segs[k].classList.toggle('on', k < lv);
     var m = masteredCount();
-    $('masteredLabel').textContent = 'MASTERED · ' + m + ' / 24';
-    $('masteredFill').style.width = (m / N * 100) + '%';
-    $('openStoa').setAttribute('aria-label', 'Mastered ' + m + ' of 24. Open the Stoa statistics');
+    $('masteredLabel').textContent = 'MASTERED · ' + m + ' / ' + NC;
+    $('masteredFill').style.width = (m / NC * 100) + '%';
+    $('openStoa').setAttribute('aria-label', 'Mastered ' + m + ' of ' + NC + ' cards. Open the Stoa statistics');
   }
 
   function announce(text) { live.textContent = text; }
@@ -218,11 +269,13 @@
     if (busy) return;
     var on = !cardEl.classList.contains('flipped');
     cardEl.classList.toggle('flipped', on);
-    var l = LETTERS[index];
-    if (on) announce(titleCase(l.name) + '. Pronounced ' + l.pron.replace(/ · /g, ' ').toLowerCase() + '. Latin ' + l.latin + '.');
+    var c = CARDS[current()];
+    if (on) announce(spokenName(c) + '. Pronounced ' + c.letter.pron.replace(/ · /g, ' ').toLowerCase() + '. Latin ' + c.latin + '.');
   }
 
-  // ---------- Layout: scale the 330x462 card to the screen ----------
+  // ---------- Layout: scale the 330x462 card and centre it on the screen ----------
+
+  var scale = 1;
 
   function layout() {
     var cs = getComputedStyle(deck);
@@ -231,14 +284,17 @@
     var hud = deck.querySelector('.hud').offsetHeight;
     var gap = h < 560 ? 24 : 48;
     deck.style.setProperty('--deck-gap', gap + 'px');
-    var s = Math.min(1, w / 330, (h - hud - gap) / 462);
-    s = Math.max(0.5, s);
+    var s = Math.max(0.5, Math.min(1, w / 330, (h - hud - gap) / 462));
     stage.style.setProperty('--fit', s);
     stageBox.style.width = (330 * s) + 'px';
     stageBox.style.height = (462 * s) + 'px';
     scale = s;
+    // Balance the header above with matching space below so the card sits at the
+    // screen's vertical centre, as far as the free space allows.
+    var slack = Math.max(0, h - hud - gap - 462 * s);
+    var pad = hud + gap + parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    table.style.paddingBottom = Math.max(0, Math.min(slack, pad)) + 'px';
   }
-  var scale = 1;
 
   // ---------- Actions & motion ----------
 
@@ -257,20 +313,20 @@
   // dx/dy: drag offset at release in card px, so the motion starts where the finger left it.
   function act(dir, dx, dy) {
     if (busy) { queued = dir; return; }
+    if (dir === 'left' && prevCard() === null) { springBack(); return; }
     busy = true;
 
     if (dir === 'up' || dir === 'down') {
-      var k = LETTERS[index].key;
-      progress.attempts[k] += 1;
-      if (dir === 'up') { progress.correct[k] += 1; progress.levels[k] = Math.min(MAX_LEVEL, progress.levels[k] + 1); }
-      else progress.levels[k] = Math.max(0, progress.levels[k] - 1);
+      var c = CARDS[current()], id = c.id;
+      progress.attempts[id] += 1;
+      if (dir === 'up') { progress.correct[id] += 1; progress.levels[id] = Math.min(MAX_LEVEL, progress.levels[id] + 1); }
+      else progress.levels[id] = Math.max(0, progress.levels[id] - 1);
       progress.trained += 1;
       renderHud();
-      announce((dir === 'up' ? 'Got it. ' : 'Missed. ') + titleCase(LETTERS[index].name) + ' is level ' + progress.levels[k] + '.');
+      announce((dir === 'up' ? 'Got it. ' : 'Missed. ') + spokenName(c) + ' is level ' + progress.levels[id] + '.');
     }
 
-    var target = dir === 'left' ? wrap(index - 1) : wrap(index + 1);
-    setBehind(target);
+    setBehind(dir === 'left' ? prevCard() : nextCard());
 
     cardEl.classList.remove('spring', 'dragging');
     cardEl.style.setProperty('--dx', (dx || 0) + 'px');
@@ -282,8 +338,8 @@
 
     var total = reduced() ? 150 : DUR[dir];
     setTimeout(function () {
-      index = target;
-      progress.lastIndex = index;
+      if (dir === 'left') goPrev(); else goNext();
+      progress.lastCard = CARDS[current()].id;
       save();
       clearMotion();
       renderCard();
@@ -294,6 +350,13 @@
         requestAnimationFrame(function () { act(q, 0, 0); });
       }
     }, total);
+  }
+
+  function springBack() {
+    cardEl.classList.add('spring');
+    cardEl.style.setProperty('--dx', '0px');
+    cardEl.style.setProperty('--dy', '0px');
+    setTimeout(function () { if (!drag && !busy) { cardEl.classList.remove('spring'); setBehind(nextCard()); } }, 240);
   }
 
   // ---------- Pointer gestures ----------
@@ -321,10 +384,10 @@
     }
     if (drag.axis === 'y') {
       cardEl.style.setProperty('--dy', (dy / scale) + 'px');
-      setBehind(wrap(index + 1));
+      setBehind(nextCard());
     } else {
       cardEl.style.setProperty('--dx', (dx / scale) + 'px');
-      setBehind(dx < 0 ? wrap(index - 1) : wrap(index + 1));
+      setBehind(dx < 0 && prevCard() !== null ? prevCard() : nextCard());
     }
   });
 
@@ -352,11 +415,7 @@
         if (dx >= COMMIT || (v.x > FLICK_V && dx >= FLICK_MIN)) return act('right', dx / scale, 0);
       }
     }
-    // spring back
-    cardEl.classList.add('spring');
-    cardEl.style.setProperty('--dx', '0px');
-    cardEl.style.setProperty('--dy', '0px');
-    setTimeout(function () { if (!drag && !busy) { cardEl.classList.remove('spring'); setBehind(wrap(index + 1)); } }, 240);
+    springBack();
   }
 
   cardEl.addEventListener('pointerup', function (e) { endDrag(e, false); });
@@ -397,27 +456,42 @@
     return '#' + a.map(function (v, k) { return Math.round(v + (b[k] - v) * p).toString(16).padStart(2, '0'); }).join('');
   }
 
+  // The Stoa shows one tile per letter, combining its capital and small cards.
+  function letterStats(l) {
+    var u = l.key + '.upper', s = l.key + '.lower';
+    var att = progress.attempts[u] + progress.attempts[s];
+    var acc = att ? Math.round((progress.correct[u] + progress.correct[s]) / att * 100) : 0;
+    var lu = progress.levels[u], ls = progress.levels[s];
+    return { upper: lu, lower: ls, mastered: lu === MAX_LEVEL && ls === MAX_LEVEL, score: (lu + ls) / 2 * 100 + acc, acc: acc };
+  }
+
+  function segRow(lv, done) {
+    var out = '';
+    for (var k = 0; k < 5; k++) out += '<span' + (k < lv ? ' style="background:' + (done ? '#8C7B5E' : '#D2B27A') + '"' : '') + '></span>';
+    return '<span class="tile-segs">' + out + '</span>';
+  }
+
   function renderStoa() {
     var m = masteredCount();
-    $('stoaMastered').textContent = 'MASTERED · ' + m + ' / 24';
+    $('stoaMastered').textContent = 'MASTERED · ' + m + ' / ' + NC;
     $('stoaTrained').textContent = 'TRAINED · ' + progress.trained;
-    $('stoaFill').style.width = (m / N * 100) + '%';
+    $('stoaFill').style.width = (m / NC * 100) + '%';
 
-    var scores = LETTERS.map(function (l, i) { return levelOf(i) * 100 + accuracy(i); });
+    var stats = LETTERS.map(letterStats);
     var html = '';
     LETTERS.forEach(function (l, i) {
-      var lv = levelOf(i);
-      var done = lv === MAX_LEVEL;
+      var st = stats[i];
+      var done = st.mastered;
       // rank within its own state; ties share the lower rank
-      var group = scores.filter(function (_, j) { return (levelOf(j) === MAX_LEVEL) === done; }).sort(function (a, b) { return a - b; });
-      var p = group.length > 1 ? group.indexOf(scores[i]) / (group.length - 1) : 1;
-      var segs = '';
-      for (var k = 0; k < 5; k++) segs += '<span' + (k < lv ? ' style="background:' + (done ? '#8C7B5E' : '#D2B27A') + '"' : '') + '></span>';
+      var group = stats.filter(function (x) { return x.mastered === done; })
+        .map(function (x) { return x.score; }).sort(function (a, b) { return a - b; });
+      var p = group.length > 1 ? group.indexOf(st.score) / (group.length - 1) : 1;
       html += '<li class="tile" style="background:' + mix(done ? MASTER : LEARN, p) + ';color:' + (done ? '#3A352E' : '#EFEBE3') + '"' +
-        ' aria-label="' + titleCase(l.name) + ', level ' + lv + ' of 5' + (done ? ', mastered' : '') + ', accuracy ' + accuracy(i) + ' percent">' +
+        ' aria-label="' + titleCase(l.name) + ': capital level ' + st.upper + ', small level ' + st.lower + ' of 5' +
+        (done ? ', mastered' : '') + ', accuracy ' + st.acc + ' percent">' +
         '<span class="tile-glyph" lang="el" aria-hidden="true">' + l.glyph + '</span>' +
         '<span class="tile-name" aria-hidden="true">' + l.name + '</span>' +
-        '<span class="tile-segs" aria-hidden="true">' + segs + '</span></li>';
+        '<span class="tile-bars" aria-hidden="true">' + segRow(st.upper, done) + segRow(st.lower, done) + '</span></li>';
     });
     $('grid').innerHTML = html;
 
@@ -479,6 +553,16 @@
     setMsg('Progress exported as ' + name + '.');
   }
 
+  function restart() {
+    history = [cardIndex(progress.lastCard)];
+    pos = 0;
+    upcoming = null;
+    behindIndex = null;
+    renderCard();
+    renderHud();
+    renderStoa();
+  }
+
   // Import
   $('importBtn').addEventListener('click', function () { $('importFile').click(); });
   $('importFile').addEventListener('change', function (e) {
@@ -491,11 +575,8 @@
       try { data = validate(JSON.parse(reader.result)); } catch (err) { data = null; }
       if (!data) { setMsg('That file isn’t a valid progress export.'); return; }
       progress = data;
-      index = progress.lastIndex;
       save();
-      renderCard();
-      renderHud();
-      renderStoa();
+      restart();
       setMsg('Progress imported.');
     };
     reader.onerror = function () { setMsg('Couldn’t read that file.'); };
@@ -512,11 +593,9 @@
   $('resetCancel').addEventListener('click', function () { hideReset(); $('resetBtn').focus(); });
   $('resetYes').addEventListener('click', function () {
     progress = blankProgress();
-    index = 0;
+    progress.lastCard = CARDS[Math.floor(Math.random() * NC)].id;
     save();
-    renderCard();
-    renderHud();
-    renderStoa();
+    restart();
     hideReset();
     $('resetBtn').focus();
     setMsg('Progress reset.');
@@ -561,6 +640,7 @@
 
   function boot() {
     computeFits();
+    behindIndex = null;
     renderCard();
     renderHud();
     layout();
