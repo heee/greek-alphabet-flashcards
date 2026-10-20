@@ -1,9 +1,10 @@
 // Bump CACHE on every deploy so phones pick up the new files.
-var CACHE = 'greek-flashcards-v2';
+var CACHE = 'greek-flashcards-v3';
 var ASSETS = [
   './',
   './index.html',
   './styles.css',
+  './words.js',
   './app.js',
   './manifest.webmanifest',
   './fonts/gfsdidot-greek.woff2',

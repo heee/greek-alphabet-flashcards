@@ -359,6 +359,52 @@ button {
   margin-right: -4px;
 }
 
+/* ---------- Sample word (below the card; positioned by JS, never affects layout) ---------- */
+
+.sample {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 0;
+  bottom: env(safe-area-inset-bottom);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+
+.sample.hide { opacity: 0; }
+
+.sample-word {
+  font-family: var(--didot);
+  font-size: 34px;
+  line-height: 1.1;
+  color: var(--marble);
+  white-space: nowrap;
+}
+
+.sample-word .hl { color: var(--gold); }
+
+.sample-reading {
+  font-family: var(--cinzel);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  line-height: 1.2;
+  color: var(--marble);
+}
+
+.sample-meaning {
+  font-family: var(--didot);
+  font-size: 17px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+
 /* ---------- Grade motion ---------- */
 
 @keyframes nod      { 0%, 100% { transform: translateY(var(--dy)) scale(1); } 50% { transform: translateY(var(--dy)) scale(1.06); } }

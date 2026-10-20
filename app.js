@@ -150,6 +150,7 @@
   var cardEl = $('card');
   var behindEl = $('behind');
   var live = $('live');
+  var sampleEl = $('sample');
   var measure = $('measure');
 
   var reducedQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
@@ -237,10 +238,13 @@
 
   var behindIndex = null;
 
-  function renderCard() {
+  function renderCard(keepWord) {
     var c = CARDS[current()];
     cardEl.innerHTML = frontHTML(current()) + backHTML(current());
     cardEl.classList.remove('flipped');
+    if (!keepWord) word = pickWord(c);
+    renderSample();
+    sampleEl.classList.remove('hide');
     cardEl.setAttribute('aria-label', (c.upper ? 'Capital' : 'Small') +
       ' letter card. Tap to flip, arrow up for got it, arrow down for missed, arrow left for previous, arrow right to skip.');
     setBehind(nextCard());
@@ -269,8 +273,51 @@
     if (busy) return;
     var on = !cardEl.classList.contains('flipped');
     cardEl.classList.toggle('flipped', on);
+    renderSample();
     var c = CARDS[current()];
-    if (on) announce(spokenName(c) + '. Pronounced ' + c.letter.pron.replace(/ · /g, ' ').toLowerCase() + '. Latin ' + c.latin + '.');
+    if (on) announce(spokenName(c) + '. Pronounced ' + c.letter.pron.replace(/ · /g, ' ').toLowerCase() + '. Latin ' + c.latin + '.' +
+      (word ? ' Example: ' + word[0] + ', ' + word[2] + '.' : ''));
+  }
+
+  // ---------- Sample words ----------
+
+  var WORDS = window.GREEK_WORDS || {};
+  var lastWord = {};   // card id -> index of the word shown last time, to avoid repeats
+  var word = null;     // [word, reading, meaning] for the current card
+
+  function pickWord(c) {
+    var list = WORDS[c.id] || [];
+    if (!list.length) return null;
+    var k = Math.floor(Math.random() * list.length);
+    if (list.length > 1 && k === lastWord[c.id]) k = (k + 1 + Math.floor(Math.random() * (list.length - 1))) % list.length;
+    lastWord[c.id] = k;
+    return list[k];
+  }
+
+  function baseChar(ch) { return ch.normalize('NFD').charAt(0); }
+
+  function escapeHTML(t) { return t.replace(/[&<>"]/g, function (m) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]; }); }
+
+  // The word with the first occurrence of the card's letter (ignoring accents) in gold.
+  function highlighted(text, target) {
+    var chars = Array.from(text);
+    for (var i = 0; i < chars.length; i++) {
+      if (baseChar(chars[i]) === target) {
+        return escapeHTML(chars.slice(0, i).join('')) + '<span class="hl">' + chars[i] + '</span>' + escapeHTML(chars.slice(i + 1).join(''));
+      }
+    }
+    return escapeHTML(text);
+  }
+
+  function renderSample() {
+    var c = CARDS[current()];
+    if (!word) { sampleEl.innerHTML = ''; return; }
+    if (cardEl.classList.contains('flipped')) {
+      sampleEl.innerHTML = '<div class="sample-reading">' + escapeHTML(word[1]) + '</div>' +
+        '<div class="sample-meaning">' + escapeHTML(word[2]) + '</div>';
+    } else {
+      sampleEl.innerHTML = '<div class="sample-word" lang="el">' + highlighted(word[0], c.glyph) + '</div>';
+    }
   }
 
   // ---------- Layout: scale the 330x462 card and centre it on the screen ----------
@@ -284,7 +331,8 @@
     var hud = deck.querySelector('.hud').offsetHeight;
     var gap = h < 560 ? 24 : 48;
     deck.style.setProperty('--deck-gap', gap + 'px');
-    var s = Math.max(0.5, Math.min(1, w / 330, (h - hud - gap) / 462));
+    // keep room below the card for the sample word
+    var s = Math.max(0.5, Math.min(1, w / 330, (h - hud - gap - SAMPLE_ROOM) / 462));
     stage.style.setProperty('--fit', s);
     stageBox.style.width = (330 * s) + 'px';
     stageBox.style.height = (462 * s) + 'px';
@@ -294,7 +342,10 @@
     var slack = Math.max(0, h - hud - gap - 462 * s);
     var pad = hud + gap + parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     table.style.paddingBottom = Math.max(0, Math.min(slack, pad)) + 'px';
+    // The sample word fills the space between the card and the bottom of the screen.
+    sampleEl.style.top = (stageBox.getBoundingClientRect().bottom - deck.getBoundingClientRect().top) + 'px';
   }
+  var SAMPLE_ROOM = 56;
 
   // ---------- Actions & motion ----------
 
@@ -334,6 +385,7 @@
     // restart animations even if the same class was just removed
     void cardEl.offsetWidth;
     cardEl.classList.add(dir);
+    sampleEl.classList.add('hide');
     behindEl.classList.add(dir === 'up' ? 'rise-up' : dir === 'down' ? 'rise-down' : 'rise-now');
 
     var total = reduced() ? 150 : DUR[dir];
@@ -641,7 +693,7 @@
   function boot() {
     computeFits();
     behindIndex = null;
-    renderCard();
+    renderCard(true);
     renderHud();
     layout();
   }

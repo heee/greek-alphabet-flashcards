@@ -17,6 +17,8 @@ Swipeable, marble-inscription flashcards for the 24 letters of the Greek alphabe
 
 Each letter has two cards, capital and small (48 in all), drawn in weighted random order: weaker cards come up more often, and a card won't repeat within six draws. The Stoa combines both cases on one tile per letter.
 
+Below each card is a random modern Greek sample word (from `words.js`, about 6 per card) with the card's letter in gold; flipping shows its reading and meaning.
+
 Progress is saved in `localStorage` (`greekFlashcards.v1`) and can be exported or imported as JSON.
 
 **Install on iPhone:** open the link in Safari → Share → Add to Home Screen.
