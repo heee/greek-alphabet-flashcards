@@ -42,12 +42,15 @@
 
   var NC = CARDS.length;
   var MAX_LEVEL = 5;
+  var STEPS = [6, 15, 40]; // relearning gaps, in cards, after a miss
   var STORAGE_KEY = 'greekFlashcards.v1';
 
   // ---------- Progress model ----------
 
   function blankProgress() {
-    var p = { version: 2, levels: {}, correct: {}, attempts: {}, trained: 0, lastCard: CARDS[0].id };
+    // tick counts cards shown; learn holds missed cards in their relearning steps:
+    // learn[id] = { step: index into STEPS, due: tick at which it should come back }.
+    var p = { version: 3, levels: {}, correct: {}, attempts: {}, trained: 0, tick: 0, learn: {}, lastCard: CARDS[0].id };
     CARDS.forEach(function (c) { p.levels[c.id] = 0; p.correct[c.id] = 0; p.attempts[c.id] = 0; });
     return p;
   }
@@ -59,7 +62,7 @@
   // Returns clean v2 progress, or null if the data is not valid. Version 1 (one record per
   // letter) is upgraded by giving both the capital and the small card the letter's record.
   function validate(data) {
-    if (!data || typeof data !== 'object' || (data.version !== 1 && data.version !== 2)) return null;
+    if (!data || typeof data !== 'object' || [1, 2, 3].indexOf(data.version) < 0) return null;
     if (!data.levels || !data.correct || !data.attempts || !isCount(data.trained)) return null;
     var p = blankProgress();
     for (var i = 0; i < NC; i++) {
@@ -71,7 +74,16 @@
       p.correct[id] = Math.min(data.correct[src], data.attempts[src]);
     }
     p.trained = data.trained;
-    if (data.version === 2 && cardIndex(data.lastCard) >= 0) p.lastCard = data.lastCard;
+    if (data.version >= 2 && cardIndex(data.lastCard) >= 0) p.lastCard = data.lastCard;
+    if (data.version === 3) {
+      if (!isCount(data.tick) || !data.learn || typeof data.learn !== 'object') return null;
+      p.tick = data.tick;
+      for (var key in data.learn) {
+        var e = data.learn[key];
+        if (cardIndex(key) < 0 || !e || !isCount(e.step, STEPS.length - 1) || !isCount(e.due)) return null;
+        p.learn[key] = { step: e.step, due: e.due };
+      }
+    }
     return p;
   }
 
@@ -101,24 +113,75 @@
     return CARDS.reduce(function (n, c) { return n + (progress.levels[c.id] === MAX_LEVEL ? 1 : 0); }, 0);
   }
 
-  // ---------- Card order: weighted random with history ----------
+  // ---------- Card order: relearning steps + weighted random ----------
+
+  // A missed card comes back after ~6 cards. Each "got it" sends it further out
+  // (~15, then ~40 cards) until it graduates back into the normal random rotation.
+  // Gaps are jittered by +/-25% so the return doesn't feel mechanical.
+  // (STEPS is declared above load() because validate() reads it.)
+  function gap(step) {
+    var n = STEPS[step];
+    return Math.max(3, Math.round(n * (0.75 + Math.random() * 0.5)));
+  }
+
+  function scheduleMiss(id) { progress.learn[id] = { step: 0, due: progress.tick + gap(0) }; }
+  function scheduleHit(id) {
+    var e = progress.learn[id];
+    if (!e) return;
+    if (e.step + 1 >= STEPS.length) { delete progress.learn[id]; return; }
+    e.step += 1;
+    e.due = progress.tick + gap(e.step);
+  }
+  // Skipping a due card nudges it back a little rather than losing its place.
+  function scheduleSkip(id) {
+    var e = progress.learn[id];
+    if (e && e.due <= progress.tick) e.due = progress.tick + 4;
+  }
 
   // Weaker cards come up more often; mastered cards still appear, just rarely.
   var WEIGHT = [10, 7, 5, 3, 2, 1];
-  var NO_REPEAT = 6; // a card isn't drawn again within this many cards
+  var NO_REPEAT = 6;   // a card isn't drawn again within this many cards
+  var SIBLING_GAP = 4; // capital and small of one letter stay this many cards apart
 
   var history = [cardIndex(progress.lastCard)];
   var pos = 0;          // position of the current card in history
   var upcoming = null;  // the pre-drawn next card, so it can sit behind the current one
 
-  function draw() {
+  function blocked(i) {
     var recent = history.slice(-NO_REPEAT);
-    var pool = [], total = 0;
-    for (var i = 0; i < NC; i++) {
-      if (recent.indexOf(i) >= 0) continue;
+    if (recent.indexOf(i) >= 0) return true;
+    var near = history.slice(-SIBLING_GAP);
+    for (var k = 0; k < near.length; k++) if (CARDS[near[k]].letter === CARDS[i].letter) return true;
+    return false;
+  }
+
+  function draw() {
+    var now = progress.tick + 1; // the drawn card will be shown at this tick
+    var i, e;
+
+    // 1. A relearning card that's due wins; the most overdue first.
+    var best = -1, bestDue = Infinity;
+    for (i = 0; i < NC; i++) {
+      e = progress.learn[CARDS[i].id];
+      if (!e || e.due > now || blocked(i)) continue;
+      if (e.due < bestDue || (e.due === bestDue && Math.random() < 0.5)) { best = i; bestDue = e.due; }
+    }
+    if (best >= 0) return best;
+
+    // 2. Otherwise weighted random over cards not waiting in a relearning step.
+    var pool = [], total = 0, fallback = [];
+    for (i = 0; i < NC; i++) {
+      if (blocked(i)) continue;
+      fallback.push(i);
+      if (progress.learn[CARDS[i].id]) continue;
       var w = WEIGHT[levelOf(i)];
       pool.push([i, w]);
       total += w;
+    }
+    if (!pool.length) {
+      // Everything left is waiting to be relearned: take the soonest due.
+      fallback.sort(function (a, b) { return progress.learn[CARDS[a].id].due - progress.learn[CARDS[b].id].due; });
+      return fallback.length ? fallback[0] : (current() + 1) % NC;
     }
     var r = Math.random() * total;
     for (var k = 0; k < pool.length; k++) { r -= pool[k][1]; if (r < 0) return pool[k][0]; }
@@ -134,7 +197,7 @@
   function prevCard() { return pos > 0 ? history[pos - 1] : null; }
 
   function goNext() {
-    if (pos === history.length - 1) { history.push(nextCard()); upcoming = null; }
+    if (pos === history.length - 1) { history.push(nextCard()); upcoming = null; progress.tick += 1; }
     pos += 1;
     if (history.length > 200) { history.splice(0, 100); pos -= 100; }
   }
@@ -372,10 +435,13 @@
       progress.attempts[id] += 1;
       if (dir === 'up') { progress.correct[id] += 1; progress.levels[id] = Math.min(MAX_LEVEL, progress.levels[id] + 1); }
       else progress.levels[id] = Math.max(0, progress.levels[id] - 1);
+      if (dir === 'up') scheduleHit(id); else scheduleMiss(id);
       progress.trained += 1;
       renderHud();
       announce((dir === 'up' ? 'Got it. ' : 'Missed. ') + spokenName(c) + ' is level ' + progress.levels[id] + '.');
     }
+
+    if (dir === 'right') scheduleSkip(CARDS[current()].id);
 
     setBehind(dir === 'left' ? prevCard() : nextCard());
 
